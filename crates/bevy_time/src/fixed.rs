@@ -67,6 +67,7 @@ use crate::{time::Time, virt::Virtual};
 pub struct Fixed {
     timestep: Duration,
     overstep: Duration,
+    overstep_max: Duration,
 }
 
 impl Time<Fixed> {
@@ -180,6 +181,66 @@ impl Time<Fixed> {
         self.context().overstep
     }
 
+    /// Returns the maximum duration that overstep can reach.
+    #[inline]
+    pub fn overstep_max(&self) -> Duration {
+        self.context().overstep_max
+    }
+
+    /// Sets the maximum amount of virtual time that the overstep can accumulate to, as [`Duration`].
+    ///
+    /// Takes effect immediately on the next run of the schedule.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `overstep_max` is zero.
+    #[inline]
+    pub fn set_overstep_max(&mut self, overstep_max: Duration) {
+        assert_ne!(
+            overstep_max,
+            Duration::ZERO,
+            "attempted to set maximum overstep to zero"
+        );
+        self.context_mut().overstep_max = overstep_max;
+    }
+
+    /// Sets the maximum amount of virtual time that the overstep can accumulate to, as seconds.
+    ///
+    /// The maximum overstep is stored as a [`Duration`], which has fixed nanosecond
+    /// resolution and will be converted from the floating point number.
+    ///
+    /// Takes effect immediately on the next run of the schedule.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `seconds` is zero, negative or not finite.
+    #[inline]
+    pub fn set_overstep_max_seconds(&mut self, seconds: f64) {
+        assert!(
+            seconds.is_sign_positive(),
+            "seconds less than or equal to zero"
+        );
+        assert!(seconds.is_finite(), "seconds is infinite");
+        self.set_overstep_max(Duration::from_secs_f64(seconds));
+    }
+
+    /// Sets the maximum amount of virtual time that the overstep can accumulate to.
+    ///
+    /// The overstep max value is set to `1 / hz`, converted to a [`Duration`] which
+    /// has fixed nanosecond resolution.
+    ///
+    /// Takes effect immediately on the next run of the schedule.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `hz` is zero, negative or not finite.
+    #[inline]
+    pub fn set_overstep_max_hz(&mut self, hz: f64) {
+        assert!(hz.is_sign_positive(), "Hz less than or equal to zero");
+        assert!(hz.is_finite(), "Hz is infinite");
+        self.set_overstep_max_seconds(1.0 / hz);
+    }
+
     /// Discard a part of the overstep amount.
     ///
     /// If `discard` is higher than overstep, the overstep becomes zero.
@@ -209,7 +270,12 @@ impl Time<Fixed> {
 
     fn expend(&mut self) -> bool {
         let timestep = self.timestep();
-        if let Some(new_value) = self.context_mut().overstep.checked_sub(timestep) {
+        if let Some(new_value) = self
+            .context_mut()
+            .overstep
+            .min(self.overstep_max())
+            .checked_sub(timestep)
+        {
             // reduce accumulated and increase elapsed by period
             self.context_mut().overstep = new_value;
             self.advance_by(timestep);
@@ -226,6 +292,7 @@ impl Default for Fixed {
         Self {
             timestep: Time::<Fixed>::DEFAULT_TIMESTEP,
             overstep: Duration::ZERO,
+            overstep_max: Duration::MAX,
         }
     }
 }
